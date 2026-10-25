@@ -17,6 +17,39 @@ for path in FILES:
     width, height = float(root.attrib['width']), float(root.attrib['height'])
     assert 0 < width <= 1341 and 0 < height <= 1341, (path, width, height)
     assert list(map(float, root.attrib['viewBox'].split())) == [0, 0, width, height]
+    if path.name == 'hexagons.svg':
+        tiles = [e for e in root.iter(NS + 'g') if e.attrib.get('class') == 'hex-tile']
+        expected_counts = {'hex-green-4': 1089, 'hex-purple-2': 12, 'hex-red-0': 0}
+        assert len(tiles) == expected_counts[path.parent.name], path
+        seen = set()
+        for tile in tiles:
+            t = tile.attrib
+            coord = (int(t['data-q']), int(t['data-r']))
+            assert coord not in seen, (path, coord)
+            seen.add(coord)
+            assert t['data-type'] in COLORS
+            orientation = int(t['data-orientation'])
+            assert 0 <= orientation < 6
+            poly = tile.find(NS + 'polygon')
+            assert poly is not None and poly.attrib['fill'] == COLORS[t['data-type']]
+            coords = [float(x) for x in re.split(r'[ ,]+', poly.attrib['points'].strip())]
+            assert len(coords) == 12 and all(math.isfinite(x) for x in coords), path
+            points = list(zip(coords[::2], coords[1::2]))
+            cx = sum(x for x, y in points) / 6
+            cy = sum(y for x, y in points) / 6
+            line = tile.find(NS + 'line')
+            assert line is not None and line.attrib['marker-end'] == 'url(#hex-arrowhead)'
+            a = float(line.attrib['x1']), float(line.attrib['y1'])
+            b = float(line.attrib['x2']), float(line.attrib['y2'])
+            assert abs(a[0]-cx) < 1e-8 and abs(a[1]-cy) < 1e-8, (path, coord)
+            dx, dy = b[0]-a[0], b[1]-a[1]
+            length = math.hypot(dx, dy)
+            assert length > 0
+            expected = (math.cos(math.pi/3*orientation),
+                        -math.sin(math.pi/3*orientation))
+            assert abs(dx/length-expected[0]) < 1e-9
+            assert abs(dy/length-expected[1]) < 1e-9
+        continue
     leaves = [e for e in root.iter(NS + 'g') if e.attrib.get('class') == 'subtile']
     assert leaves, path
     for leaf in leaves:

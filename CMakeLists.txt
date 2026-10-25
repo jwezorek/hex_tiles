@@ -20,7 +20,8 @@ target_link_libraries(hex_tiles
 )
 
 # The exact core and renderer have no Eigen/Boost or geometric dependencies.
-add_library(triangle_grid src/triangle_grid.cpp src/combinatorial_hex.cpp src/combinatorial_svg.cpp)
+add_library(triangle_grid src/triangle_grid.cpp src/combinatorial_hex.cpp src/combinatorial_svg.cpp
+    src/hex_grid.cpp src/hex_grid_svg.cpp)
 target_include_directories(triangle_grid PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(hex_tiles PRIVATE triangle_grid)
 
@@ -29,6 +30,10 @@ if(BUILD_TESTING)
     add_executable(triangle_grid_tests tests/triangle_grid_tests.cpp)
     target_link_libraries(triangle_grid_tests PRIVATE triangle_grid)
     add_test(NAME triangle_grid_transformations COMMAND triangle_grid_tests)
+
+    add_executable(hex_grid_tests tests/hex_grid_tests.cpp)
+    target_link_libraries(hex_grid_tests PRIVATE triangle_grid)
+    add_test(NAME hex_grid_reconstruction COMMAND hex_grid_tests)
 
     add_executable(combinatorial_hex_tests tests/combinatorial_hex_tests.cpp
         src/hex.cpp src/tile.cpp src/geometry.cpp)

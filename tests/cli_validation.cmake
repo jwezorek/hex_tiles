@@ -46,3 +46,15 @@ foreach(file patch.svg rules.svg)
         message(FATAL_ERROR "Missing SVG root")
     endif()
 endforeach()
+run_bad("--hex-svg requires --mode combinatorial" --hex-svg)
+run_ok(--mode combinatorial --preset regular --seed green --depth 4
+    --hex-svg --out-dir "${OUTPUT_ROOT}/hex-green-4")
+run_ok(--mode combinatorial --preset regular --seed purple --depth 2
+    --hex-svg --out-dir "${OUTPUT_ROOT}/hex-purple-2")
+run_ok(--mode combinatorial --preset regular --seed red --depth 0
+    --hex-svg --out-dir "${OUTPUT_ROOT}/hex-red-0")
+foreach(folder hex-green-4 hex-purple-2 hex-red-0)
+    if(NOT EXISTS "${OUTPUT_ROOT}/${folder}/hexagons.svg")
+        message(FATAL_ERROR "Missing hexagon SVG in ${folder}")
+    endif()
+endforeach()

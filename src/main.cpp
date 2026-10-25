@@ -2,6 +2,8 @@
 #include "geometry.hpp"
 #include "combinatorial_hex.hpp"
 #include "combinatorial_svg.hpp"
+#include "hex_grid.hpp"
+#include "hex_grid_svg.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -22,6 +24,7 @@ namespace {
         unsigned depth = 4;
         std::filesystem::path out_dir = "output";
         bool arrows = false;
+        bool hex_svg = false;
         bool help = false;
     };
 
@@ -33,7 +36,8 @@ namespace {
             << "  --seed TYPE              yellow|blue|green|purple|red (default: green)\n"
             << "  --depth N                Nonnegative substitution depth (default: 4)\n"
             << "  --out-dir PATH           Directory for patch.svg and rules.svg (default: output)\n"
-            << "  --arrows                 Draw direction arrows (off by default)\n"
+            << "  --arrows                 Draw subtile direction arrows (off by default)\n"
+            << "  --hex-svg                Also write hexagons.svg with orientation arrows\n"
             << "  --no-arrows              Disable direction arrows\n"
             << "  --help                   Show this help\n"
             << "Use either --preset or both --long and --short, never both.\n"
@@ -75,6 +79,10 @@ namespace {
             if (arg == "--help") {
                 result.help = true;
                 return result;
+            }
+            if (arg == "--hex-svg") {
+                result.hex_svg = true;
+                continue;
             }
             if (arg == "--arrows") {
                 result.arrows = true;
@@ -122,6 +130,8 @@ namespace {
         if (has_long != has_short) {
             throw std::invalid_argument("custom dimensions require both --long and --short");
         }
+        if (result.hex_svg && result.mode != "combinatorial")
+            throw std::invalid_argument("--hex-svg requires --mode combinatorial");
         if (result.mode == "combinatorial") {
             if (has_long || has_short)
                 throw std::invalid_argument("combinatorial mode does not support custom lengths; use --preset regular");
@@ -159,9 +169,16 @@ int main(int argc, char* argv[]) {
             std::filesystem::create_directories(opt.out_dir);
             jw::grid::to_svg((opt.out_dir / "patch.svg").string(), patch, opt.arrows);
             jw::grid::rules_svg((opt.out_dir / "rules.svg").string(), opt.arrows);
+            if (opt.hex_svg) {
+                const auto hexes = jw::hexgrid::convert(patch);
+                jw::hexgrid::to_svg((opt.out_dir / "hexagons.svg").string(), hexes);
+                std::cout << "Converted " << hexes.size() << " complete hexagons ("
+                          << hexes.rejected_boundary << " boundary fragments discarded)\n";
+            }
             std::cout << "Wrote " << patch.leaves.size() << " leaf subtiles ("
                       << patch.occupancy.size() << " triangle cells) to " << opt.out_dir
-                      << " (patch.svg, rules.svg)\n";
+                      << (opt.hex_svg ? " (patch.svg, rules.svg, hexagons.svg)\n"
+                                     : " (patch.svg, rules.svg)\n");
             return 0;
         }
         const auto tiles = jw::get_hex_subtiles(opt.lengths);
