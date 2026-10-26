@@ -1,0 +1,6 @@
+interior_seed,blue,leaf,4,frame,0,1,-1,-1,8,5
+interior_seed,purple,leaf,5,frame,1,0,0,1,9,3
+interior_seed,yellow,leaf,6,frame,-1,-1,1,0,9,5
+interior_seed,green,leaf,41,frame,0,1,-1,-1,8,8
+interior_seed,red,leaf,335,frame,-1,-1,1,0,21,5
+all_five_seeds_extend_via_green_depth,4

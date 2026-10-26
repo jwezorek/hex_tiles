@@ -93,13 +93,23 @@ namespace jw::hexgrid {
             }
             return result;
         }
-        std::optional<unsigned> motif_orientation(grid::tile_type type,const signature& observed) {
+        std::optional<unsigned> motif_orientation(grid::tile_type type,const signature& observed,
+                                                   unsigned mask=63) {
             const auto& template_motif=(type==grid::tile_type::yellow || type==grid::tile_type::red)
                                       ?triangle_motif:trapezoid_motif;
             // The first matching rotation is canonical for motifs with symmetry.
-            for (unsigned turn=0;turn<6;++turn)
-                if (rotate_signature(template_motif,static_cast<int>(turn))==observed) return turn;
-            return std::nullopt;
+            std::optional<unsigned> result;
+            const unsigned period=(type==grid::tile_type::yellow || type==grid::tile_type::red)?2:6;
+            for (unsigned turn=0;turn<period;++turn) {
+                const auto rotated=rotate_signature(template_motif,static_cast<int>(turn));
+                bool matches=true;
+                for(unsigned i=0;i<6;++i) if((mask&(1u<<i)) && rotated[i]!=observed[i]) matches=false;
+                if(matches) {
+                    if(result) throw std::logic_error("ambiguous decorated hex motif");
+                    result=turn;
+                }
+            }
+            return result;
         }
         int direction(vertex v) {
             for (int i=0;i<6;++i) if (arrows[i]==v) return i;
@@ -109,17 +119,20 @@ namespace jw::hexgrid {
             std::array<cell,6> cells;
             std::array<grid::node_id,6> ids{};
             int occupied=0;
+            unsigned mask=0;
             std::optional<grid::tile_type> type;
             std::optional<unsigned> orientation;
         };
-        candidate examine(const grid::patch& p,vertex center) {
+        candidate examine(const grid::patch& p,vertex center,bool partial=false) {
             candidate c;
+            c.ids.fill(grid::no_parent);
             c.cells=around(center);
             signature observed;
             for (int k=0;k<6;++k) {
                 const auto it=p.occupancy.find(c.cells[k]);
                 if (it==p.occupancy.end()) continue;
                 ++c.occupied;
+                c.mask|=1u<<k;
                 const auto id=it->second;
                 if (id>=p.nodes.size()) throw std::logic_error("hex reconstruction: invalid leaf ID");
                 const auto& owner=p.nodes[id];
@@ -131,6 +144,15 @@ namespace jw::hexgrid {
                 if (determinant!=1 && determinant!=-1)
                     throw std::logic_error("hex reconstruction: invalid leaf affine determinant");
                 observed[k]={direction({owner.transform.a,owner.transform.c}),determinant<0};
+            }
+            if(partial && c.occupied) {
+                const auto first=std::find_if(c.ids.begin(),c.ids.end(),[](auto id){return id!=grid::no_parent;});
+                const auto type=p.nodes.at(*first).type;
+                for(auto id:c.ids) if(id!=grid::no_parent && p.nodes.at(id).type!=type)
+                    throw std::logic_error("conflicting supported hex colors");
+                c.type=type;
+                c.orientation=motif_orientation(type,observed,c.mask);
+                return c;
             }
             if (c.occupied==6) {
                 // The subtype must be uniform; recheck explicitly because an
@@ -242,13 +264,14 @@ namespace jw::hexgrid {
         return result;
     }
 
-    hex_patch convert(const grid::patch& source,std::optional<lattice> placement) {
+    hex_patch convert(const grid::patch& source,std::optional<lattice> placement,reconstruction mode) {
+        const bool partial=mode==reconstruction::supported_sectors;
         // A rooted supertile supplies an exact expected support. A finite leaf
         // patch instead uses its occupied cells as the support; missing rings
         // that touch its exterior are permissible boundary fragments.
         const bool rooted=!source.nodes.empty() && source.nodes.front().level!=0;
         const std::optional<support> expected=rooted?std::optional<support>(source):std::nullopt;
-        if (!rooted) {
+        if (!rooted || partial) {
             // In a source-independent patch the prototile occurrences, rather
             // than a root outline, give the exact intended support. A missing
             // cell *inside* one of those occurrences is never a boundary
@@ -292,6 +315,34 @@ namespace jw::hexgrid {
                 if (!source.occupancy.contains(world) && expected->strictly_inside(world))
                     throw std::logic_error("missing elementary triangles inside root supertile");
             }
+        }
+        if(partial) {
+            std::optional<int> phase;
+            for(auto id:source.leaves) {
+                const auto& n=source.nodes.at(id);
+                const bool tiny=n.type==grid::tile_type::yellow || n.type==grid::tile_type::red;
+                const auto center=n.transform(tiny?vertex{}:vertex{1,0});
+                const int next=residue(center);
+                if((phase && *phase!=next) || (placement && residue(placement->origin)!=next))
+                    throw std::logic_error("inconsistent base-prototile hex lattice phase");
+                phase=next;
+            }
+            hex_patch result;
+            result.placement=placement.value_or(lattice{{phase.value_or(0),0}});
+            std::set<vertex> supported;
+            for(const auto& [c,id]:source.occupancy) {
+                (void)id;
+                for(auto v:c.vertices()) if(residue(v)==residue(result.placement.origin)) supported.insert(v);
+            }
+            for(auto center:supported) {
+                const auto c=examine(source,center,true);
+                if(!c.orientation) throw std::logic_error("conflicting supported hex decorations");
+                hex_tile tile{result.placement.locate(center),*c.type,*c.orientation};
+                tile.source_leaves=c.ids;tile.observed_sectors=c.mask;
+                for(unsigned i=0;i<6;++i) if(c.mask&(1u<<i)) tile.triangles[i]=c.cells[i];
+                result.insert(std::move(tile));
+            }
+            return result;
         }
         std::array<std::set<vertex>,3> centers;
         for (const auto& [c,id]:source.occupancy) {
@@ -379,6 +430,7 @@ namespace jw::hexgrid {
                 if (!used.insert(triangle).second)
                     throw std::logic_error("triangle assigned to multiple hexagons");
             hex_tile tile{result.placement.locate(center),*c.type,*c.orientation,c.cells,c.ids};
+            tile.observed_sectors=63;
             if (!result.insert(std::move(tile)))
                 throw std::logic_error("duplicate hexagon coordinate");
         }

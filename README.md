@@ -154,3 +154,7 @@ to check your current checkout and environment.
 ## License
 
 [MIT](LICENSE), copyright © 2026 joe wezorek.
+
+Exhaustive radius-n collar catalogs and standalone SVG contact sheets are
+available through `generate_collars` and `collars_to_svg`; see [COLLARS.md](COLLARS.md)
+and the runnable `collar_example` target.

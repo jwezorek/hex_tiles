@@ -1,0 +1,10 @@
+catalog,k,0,V,19,min_hexes,3,max_hexes,3,0,0,0,0,0,0
+catalog,k,1,V,19,min_hexes,21,max_hexes,33,14,7,0,0,0,0
+catalog,k,2,V,19,min_hexes,120,max_hexes,210,14,29,50,49,16,0
+catalog,k,3,V,19,min_hexes,748,max_hexes,1365,14,29,50,77,110,149
+catalog,k,4,V,19,min_hexes,4983,max_hexes,9183,14,29,50,77,110,149
+equals_final,k,0,0,0,0,0,0,0
+equals_final,k,1,1,0,0,0,0,0
+equals_final,k,2,1,1,1,0,0,0
+equals_final,k,3,1,1,1,1,1,1
+equals_final,k,4,1,1,1,1,1,1

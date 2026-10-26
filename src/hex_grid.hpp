@@ -42,6 +42,9 @@ namespace jw::hexgrid {
         // patch lattice suffice for reconstructing the underlying subtiles.
         std::array<grid::cell,6> triangles{};
         std::array<grid::node_id,6> source_leaves{};
+        // Bit k means sector k was observed during conversion. Unobserved
+        // source_leaves are no_parent; triangles in those slots are unspecified.
+        unsigned observed_sectors = 0;
     };
 
     struct hex_patch {
@@ -70,6 +73,11 @@ namespace jw::hexgrid {
 
     // The optional placement specifies the phase exactly, avoiding phase inference
     // on finite patches. Without it, the original supertile behavior is preserved.
+    enum class reconstruction { complete_hexes, supported_sectors };
+    // supported_sectors decodes every represented hex from one or more sectors.
+    // All base prototiles must be complete and agree on phase, including at
+    // boundaries. It never infers hexes with no observed sector.
     hex_patch convert(const grid::patch& triangles,
-                      std::optional<lattice> placement = std::nullopt);
+                      std::optional<lattice> placement = std::nullopt,
+                      reconstruction mode = reconstruction::complete_hexes);
 }
