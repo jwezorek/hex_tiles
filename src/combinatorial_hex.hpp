@@ -44,8 +44,10 @@ namespace jw::grid {
     struct incidence { cell triangle; node_id owner; };
     using edge_index = std::map<edge,std::vector<incidence>>;
     struct patch {
-        // Stable deterministic preorder IDs, with root ID 0. References into the
-        // vector need not survive construction; IDs do. Child order matches hex.cpp.
+        // Supertile construction uses deterministic preorder IDs and root ID 0;
+        // finite hex reconstruction also uses this type, with leaf-only nodes
+        // and no enclosing root. References into nodes can be invalidated by
+        // construction; IDs remain stable. Child order matches hex.cpp.
         std::vector<occurrence> nodes;
         std::vector<node_id> leaves;
         std::map<cell,node_id> occupancy;

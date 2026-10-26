@@ -17,10 +17,17 @@ for path in FILES:
     width, height = float(root.attrib['width']), float(root.attrib['height'])
     assert 0 < width <= 1341 and 0 < height <= 1341, (path, width, height)
     assert list(map(float, root.attrib['viewBox'].split())) == [0, 0, width, height]
-    if path.name == 'hexagons.svg':
+    if path.name in ('hexagons.svg', 'finite_original.svg', 'finite_substituted.svg'):
         tiles = [e for e in root.iter(NS + 'g') if e.attrib.get('class') == 'hex-tile']
-        expected_counts = {'hex-green-4': 1089, 'hex-purple-2': 12, 'hex-red-0': 0}
-        assert len(tiles) == expected_counts[path.parent.name], path
+        expected_counts = {
+            ('hex-green-4', 'hexagons.svg'): 1089,
+            ('hex-purple-2', 'hexagons.svg'): 12,
+            ('hex-red-0', 'hexagons.svg'): 0,
+            ('hex-finite-blue-4', 'hexagons.svg'): 1089,
+            ('hex-finite-blue-4', 'finite_original.svg'): 19,
+            ('hex-finite-blue-4', 'finite_substituted.svg'): 836,
+        }
+        assert len(tiles) == expected_counts[(path.parent.name, path.name)], path
         seen = set()
         for tile in tiles:
             t = tile.attrib

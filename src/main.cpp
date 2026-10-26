@@ -4,6 +4,7 @@
 #include "combinatorial_svg.hpp"
 #include "hex_grid.hpp"
 #include "hex_grid_svg.hpp"
+#include "finite_patch.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -11,6 +12,8 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -25,6 +28,9 @@ namespace {
         std::filesystem::path out_dir = "output";
         bool arrows = false;
         bool hex_svg = false;
+        bool finite_patch = false;
+        unsigned patch_radius = 2;
+        unsigned substitute_steps = 2;
         bool help = false;
     };
 
@@ -38,11 +44,15 @@ namespace {
             << "  --out-dir PATH           Directory for patch.svg and rules.svg (default: output)\n"
             << "  --arrows                 Draw subtile direction arrows (off by default)\n"
             << "  --hex-svg                Also write hexagons.svg with orientation arrows\n"
+            << "  --finite-patch           Select/interior-substitute a finite hex patch\n"
+            << "  --patch-radius N         Radius of selected hex ball (default: 2)\n"
+            << "  --substitute-steps N     Steps for selected finite patch (default: 2)\n"
             << "  --no-arrows              Disable direction arrows\n"
             << "  --help                   Show this help\n"
             << "Use either --preset or both --long and --short, never both.\n"
             << "Combinatorial mode requires --preset regular; custom lengths are unsupported.\n"
-            << "Depth 0 is one canonical leaf; depths >= 1 use raw level-specific rules.\n";
+            << "Depth 0 is one canonical leaf; depths >= 1 use raw level-specific rules.\n"
+            << "Finite patch mode writes finite_original.svg and finite_substituted.svg.\n";
     }
 
     double parse_double(std::string_view value, std::string_view option) {
@@ -58,13 +68,13 @@ namespace {
         return number;
     }
 
-    unsigned parse_depth(std::string_view value) {
+    unsigned parse_depth(std::string_view value,std::string_view option="--depth") {
         unsigned depth = 0;
         const auto* first = value.data();
         const auto [end, error] = std::from_chars(first, first + value.size(), depth);
         if (error != std::errc{} || end != first + value.size()) {
-            throw std::invalid_argument("invalid nonnegative integer for --depth: "
-                                        + std::string(value));
+            throw std::invalid_argument("invalid nonnegative integer for " + std::string(option)
+                                        + ": " + std::string(value));
         }
         return depth;
     }
@@ -80,6 +90,10 @@ namespace {
                 result.help = true;
                 return result;
             }
+            if (arg == "--finite-patch") {
+                result.finite_patch = true;
+                continue;
+            }
             if (arg == "--hex-svg") {
                 result.hex_svg = true;
                 continue;
@@ -93,7 +107,8 @@ namespace {
                 continue;
             }
             if (arg != "--preset" && arg != "--long" && arg != "--short"
-                && arg != "--seed" && arg != "--depth" && arg != "--out-dir" && arg != "--mode") {
+                && arg != "--seed" && arg != "--depth" && arg != "--out-dir" && arg != "--mode"
+                && arg != "--patch-radius" && arg != "--substitute-steps") {
                 throw std::invalid_argument("unknown option: " + std::string(arg));
             }
             if (++i == argc) {
@@ -119,7 +134,13 @@ namespace {
             } else if (arg == "--seed") {
                 result.seed = value;
             } else if (arg == "--depth") {
-                result.depth = parse_depth(value);
+                result.depth = parse_depth(value,arg);
+            } else if (arg == "--patch-radius") {
+                result.finite_patch = true;
+                result.patch_radius = parse_depth(value,arg);
+            } else if (arg == "--substitute-steps") {
+                result.finite_patch = true;
+                result.substitute_steps = parse_depth(value,arg);
             } else {
                 result.out_dir = std::filesystem::path(std::string(value));
             }
@@ -132,6 +153,8 @@ namespace {
         }
         if (result.hex_svg && result.mode != "combinatorial")
             throw std::invalid_argument("--hex-svg requires --mode combinatorial");
+        if (result.finite_patch && result.mode != "combinatorial")
+            throw std::invalid_argument("finite patch substitution requires --mode combinatorial");
         if (result.mode == "combinatorial") {
             if (has_long || has_short)
                 throw std::invalid_argument("combinatorial mode does not support custom lengths; use --preset regular");
@@ -155,6 +178,52 @@ namespace {
         }
         return result;
     }
+    // Find a full radius-r ball, preferring one near the patch centroid.
+    // The input supertile is only a convenient DEMO source; the substitute
+    // operation below receives the isolated hexes and no ancestry.
+    jw::hexgrid::hex_patch select_hex_ball(const jw::hexgrid::hex_patch& source,unsigned radius) {
+        namespace h=jw::hexgrid;
+        namespace g=jw::grid;
+        const auto r=static_cast<g::integer>(radius);
+        const auto count=g::add(1,g::multiply(3,g::multiply(r,g::add(r,1))));
+        if (count>static_cast<g::integer>(source.size()))
+            throw std::invalid_argument("no complete hex ball of requested radius; increase --depth");
+        long double mean_q=0,mean_r=0;
+        for (const auto& [at,tile]:source.tiles) {
+            (void)tile;
+            mean_q+=static_cast<long double>(at.q);
+            mean_r+=static_cast<long double>(at.r);
+        }
+        mean_q/=source.size();mean_r/=source.size();
+        std::optional<h::coordinate> best;
+        long double best_distance=std::numeric_limits<long double>::infinity();
+        for (const auto& [at,tile]:source.tiles) {
+            (void)tile;
+            std::size_t included=0;
+            for (const auto& [other,unused]:source.tiles) {
+                (void)unused;
+                const auto dq=g::subtract(other.q,at.q),dr=g::subtract(other.r,at.r);
+                if (dq>=-r && dq<=r && dr>=-r && dr<=r &&
+                    g::add(dq,dr)>=-r && g::add(dq,dr)<=r) ++included;
+            }
+            const bool complete=included==static_cast<std::size_t>(count);
+            const long double q=static_cast<long double>(at.q)-mean_q;
+            const long double v=static_cast<long double>(at.r)-mean_r;
+            const long double score=q*q+q*v+v*v;
+            if (complete && score<best_distance) {best=at;best_distance=score;}
+        }
+        if (!best)
+            throw std::invalid_argument("no complete interior hex ball; increase --depth or reduce --patch-radius");
+        h::hex_patch selected;
+        selected.placement=source.placement;
+        for (const auto& [at,tile]:source.tiles) {
+            const auto dq=g::subtract(at.q,best->q),dr=g::subtract(at.r,best->r);
+            if (dq>=-r && dq<=r && dr>=-r && dr<=r &&
+                g::add(dq,dr)>=-r && g::add(dq,dr)<=r) selected.insert(tile);
+        }
+        return selected;
+    }
+
 }
 
 int main(int argc, char* argv[]) {
@@ -169,16 +238,29 @@ int main(int argc, char* argv[]) {
             std::filesystem::create_directories(opt.out_dir);
             jw::grid::to_svg((opt.out_dir / "patch.svg").string(), patch, opt.arrows);
             jw::grid::rules_svg((opt.out_dir / "rules.svg").string(), opt.arrows);
-            if (opt.hex_svg) {
+            if (opt.hex_svg || opt.finite_patch) {
                 const auto hexes = jw::hexgrid::convert(patch);
-                jw::hexgrid::to_svg((opt.out_dir / "hexagons.svg").string(), hexes);
+                if (opt.hex_svg)
+                    jw::hexgrid::to_svg((opt.out_dir / "hexagons.svg").string(), hexes);
                 std::cout << "Converted " << hexes.size() << " complete hexagons ("
                           << hexes.rejected_boundary << " boundary fragments discarded)\n";
+                if (opt.finite_patch) {
+                    const auto selected=select_hex_ball(hexes,opt.patch_radius);
+                    const auto result=jw::hexgrid::substitute(selected,opt.substitute_steps);
+                    jw::hexgrid::to_svg((opt.out_dir / "finite_original.svg").string(),selected);
+                    jw::hexgrid::to_svg((opt.out_dir / "finite_substituted.svg").string(),result);
+                    std::cout << "Substituted " << selected.size() << " isolated hexes "
+                              << opt.substitute_steps << " steps to " << result.size()
+                              << " complete hexes (" << result.rejected_boundary
+                              << " boundary fragments discarded)\n";
+                }
             }
             std::cout << "Wrote " << patch.leaves.size() << " leaf subtiles ("
                       << patch.occupancy.size() << " triangle cells) to " << opt.out_dir
-                      << (opt.hex_svg ? " (patch.svg, rules.svg, hexagons.svg)\n"
-                                     : " (patch.svg, rules.svg)\n");
+                      << " (patch.svg, rules.svg"
+                      << (opt.hex_svg ? ", hexagons.svg" : "")
+                      << (opt.finite_patch ? ", finite_original.svg, finite_substituted.svg" : "")
+                      << ")\n";
             return 0;
         }
         const auto tiles = jw::get_hex_subtiles(opt.lengths);

@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <set>
+#include <map>
+#include <queue>
+#include <vector>
 #include <stdexcept>
 #include <string>
 
@@ -181,16 +184,114 @@ namespace jw::hexgrid {
         };
     }
 
-    hex_patch convert(const grid::patch& source) {
-        if (source.nodes.empty()) throw std::invalid_argument("cannot convert a patch without a root");
-        const support expected(source);
+    grid::patch to_triangles(const hex_patch& hexes) {
+        grid::patch result;
+        const grid::lengths dims{};
+        for (const auto& [at,tile] : hexes.tiles) {
+            if (tile.at!=at) throw std::invalid_argument("hex tile coordinate disagrees with map key");
+            const bool small=tile.type==grid::tile_type::yellow || tile.type==grid::tile_type::red;
+            if (static_cast<unsigned>(tile.type)>=grid::types.size() ||
+                tile.orientation >= (small?2u:6u))
+                throw std::invalid_argument("invalid hex type or canonical orientation");
+            const auto center=hexes.placement.center(at);
+            const auto ring=around(center);
+            const auto signature=rotate_signature(small?triangle_motif:trapezoid_motif,
+                                                  static_cast<int>(tile.orientation));
+            // In the canonical trapezoid motif the two leaves occupy sectors
+            // [0,1,2] and [3,4,5]; rotate these groups with the motif.
+            const unsigned count=small?6u:2u;
+            for (unsigned group=0;group<count;++group) {
+                std::set<cell> target;
+                const unsigned first=small?group:3*group;
+                const unsigned width=small?1u:3u;
+                for (unsigned k=0;k<width;++k)
+                    target.insert(ring[(first+k+tile.orientation)%6]);
+                const auto d=signature[(first+tile.orientation)%6];
+                const grid::affine linear=grid::rotate(d.direction+(d.mirrored?3:0))*
+                                            (d.mirrored?grid::reflect():grid::affine{});
+                const auto canonical=grid::canonical_region(tile.type,dims);
+                if (canonical.size()!=target.size())
+                    throw std::logic_error("motif group has unexpected cell count");
+                std::optional<grid::affine> placed;
+                // Local vertex (0,0) maps to a target-cell vertex. There are
+                // only 3 or 9 candidates, and every comparison is exact.
+                for (const auto& c:target) for (auto v:c.vertices()) {
+                    const auto transform=grid::translate(v)*linear;
+                    std::set<cell> image;
+                    for (auto local:canonical) image.insert(transform(local));
+                    if (image==target) {
+                        if (placed && *placed!=transform)
+                            throw std::logic_error("ambiguous subtile frame in hex motif");
+                        placed=transform;
+                    }
+                }
+                if (!placed) throw std::logic_error("invalid hex motif decomposition");
+                if (result.occupancy.size()+target.size()>grid::max_patch_cells)
+                    throw std::length_error("hex-to-triangle conversion exceeds cell limit");
+                const auto id=result.nodes.size();
+                result.nodes.push_back({tile.type,0,grid::no_parent,group,*placed,{},{}});
+                result.leaves.push_back(id);
+                for (auto c:canonical) {
+                    const auto world=(*placed)(c);
+                    if (!result.occupancy.emplace(world,id).second)
+                        throw std::logic_error("hex patch produces overlapping elementary triangles");
+                    result.nodes.back().cells.push_back(world);
+                }
+            }
+        }
+        return result;
+    }
+
+    hex_patch convert(const grid::patch& source,std::optional<lattice> placement) {
+        // A rooted supertile supplies an exact expected support. A finite leaf
+        // patch instead uses its occupied cells as the support; missing rings
+        // that touch its exterior are permissible boundary fragments.
+        const bool rooted=!source.nodes.empty() && source.nodes.front().level!=0;
+        const std::optional<support> expected=rooted?std::optional<support>(source):std::nullopt;
+        if (!rooted) {
+            // In a source-independent patch the prototile occurrences, rather
+            // than a root outline, give the exact intended support. A missing
+            // cell *inside* one of those occurrences is never a boundary
+            // fragment, even if the entire patch has a hole elsewhere.
+            std::map<cell,grid::node_id> checked;
+            for (auto id:source.leaves) {
+                if (id>=source.nodes.size())
+                    throw std::logic_error("invalid finite triangle patch leaf ID");
+                const auto& n=source.nodes[id];
+                if (n.level!=0 || (n.transform.determinant()!=1 && n.transform.determinant()!=-1))
+                    throw std::logic_error("invalid finite triangle patch occurrence");
+                const auto canonical=grid::canonical_region(n.type);
+                if (n.cells.size()!=canonical.size())
+                    throw std::logic_error("incomplete finite triangle subtile");
+                std::set<cell> cells(n.cells.begin(),n.cells.end());
+                for (auto c:canonical) {
+                    const auto world=n.transform(c);
+                    if (!cells.contains(world) || !checked.emplace(world,id).second)
+                        throw std::logic_error("invalid finite triangle subtile coverage");
+                }
+            }
+            if (checked!=source.occupancy)
+                throw std::logic_error("missing/extra triangles in finite patch occupancy");
+        }
         // Verify that the input triangle occupancy is a subset of the root
         // region, and each claimed leaf actually contains its own triangle.
         for (const auto& [c,id]:source.occupancy) {
-            if (!expected.contains(c)) throw std::logic_error("triangle outside the root supertile");
+            if (expected && !expected->contains(c)) throw std::logic_error("triangle outside the root supertile");
             if (id>=source.nodes.size() || source.nodes[id].level!=0 ||
                 std::find(source.nodes[id].cells.begin(),source.nodes[id].cells.end(),c)==source.nodes[id].cells.end())
                 throw std::logic_error("triangle occupancy disagrees with leaf cells");
+        }
+        if (expected) {
+            // The ancestor provides intended support even when an entire
+            // interior hex (all six cells) is missing from occupancy. Such a
+            // hole has no occupied candidate center and cannot be detected
+            // just by examining partial six-sector rings.
+            const auto& root=source.nodes.front();
+            for (auto local:grid::canonical_region(root.type,expected->dims)) {
+                const auto world=root.transform(local);
+                if (!source.occupancy.contains(world) && expected->strictly_inside(world))
+                    throw std::logic_error("missing elementary triangles inside root supertile");
+            }
         }
         std::array<std::set<vertex>,3> centers;
         for (const auto& [c,id]:source.occupancy) {
@@ -208,16 +309,55 @@ namespace jw::hexgrid {
                 else ++invalid[phase];
             }
         }
-        int chosen=0;
-        for (int phase=1;phase<3;++phase)
+        int chosen=placement?residue(placement->origin):0;
+        if (!placement) for (int phase=1;phase<3;++phase)
             if (valid[phase]>valid[chosen] ||
                 (valid[phase]==valid[chosen] && invalid[phase]<invalid[chosen]))
                 chosen=phase;
-        if (valid[chosen]>0) for (int phase=0;phase<3;++phase)
+        if (!placement && valid[chosen]>0) for (int phase=0;phase<3;++phase)
             if (phase!=chosen && valid[phase]==valid[chosen] && invalid[phase]==invalid[chosen])
                 throw std::logic_error("ambiguous hex-grid phase in patch");
         hex_patch result;
-        result.placement.origin={chosen,0};
+        result.placement=placement.value_or(lattice{{chosen,0}});
+        // On an arbitrary finite patch there is no enclosing root polygon.
+        // Classify missing sectors by connectivity in the complement of the
+        // hex-center lattice instead: a fragment connected to the infinite
+        // exterior is a boundary fragment, but an enclosed void is an error.
+        // One ring of empty centers suffices to represent the exterior: any
+        // component reaching beyond that ring is unbounded. Whole absent
+        // hexes are intentional support holes in an arbitrary finite patch;
+        // they also expose the boundary of adjacent partial rings.
+        std::map<coordinate,unsigned> occupied_centers;
+        for (auto center:centers[chosen])
+            occupied_centers.emplace(result.placement.locate(center),
+                                     static_cast<unsigned>(examine(source,center).occupied));
+        std::map<coordinate,unsigned> vicinity=occupied_centers;
+        for (const auto& [at,count]:occupied_centers) {
+            (void)count;
+            for (auto n:neighbors(at)) vicinity.try_emplace(n,0u);
+        }
+        std::set<coordinate> exterior;
+        std::queue<coordinate> search;
+        for (const auto& [at,count]:vicinity) {
+            if (count==6) continue;
+            const auto around_center=neighbors(at);
+            if (count==0 || std::any_of(around_center.begin(),around_center.end(),
+                    [&](coordinate n){return !vicinity.contains(n);} )) {
+                exterior.insert(at);
+                search.push(at);
+            }
+        }
+        while (!search.empty()) {
+            const auto at=search.front();search.pop();
+            for (auto n:neighbors(at)) {
+                const auto it=vicinity.find(n);
+                if (it!=vicinity.end() && it->second!=6 && exterior.insert(n).second)
+                    search.push(n);
+            }
+        }
+        for (const auto& [at,count]:vicinity)
+            if (count!=6 && !exterior.contains(at))
+                throw std::logic_error("missing interior hexagon or incomplete interior motif");
         std::set<cell> used;
         std::size_t boundary_cells=0;
         for (auto center:centers[chosen]) {
@@ -226,7 +366,7 @@ namespace jw::hexgrid {
                 // A partial ring crossing the outside is expected. A missing
                 // elementary cell surrounded by the ROOT's intended region is not.
                 for (const auto& missing:c.cells)
-                    if (!source.occupancy.contains(missing) && expected.strictly_inside(missing))
+                    if (expected && !source.occupancy.contains(missing) && expected->strictly_inside(missing))
                         throw std::logic_error("incomplete interior hexagon at triangle vertex ("+
                             std::to_string(center.q)+","+std::to_string(center.r)+")");
                 ++result.rejected_boundary;

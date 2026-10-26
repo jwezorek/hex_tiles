@@ -37,7 +37,9 @@ namespace jw::hexgrid {
         // Yellow/red rosettes have 3-fold symmetry: only orientation parity is distinct.
         // Reflections of all five known motifs are rotation-equivalent; no mirror bit.
         unsigned orientation = 0;
-        // Six CCW sectors beginning at angle -150deg, source triangle and leaf ID.
+        // Six CCW sectors beginning at angle -150deg. These auxiliary arrays
+        // are derived provenance only; color, orientation, coordinate and
+        // patch lattice suffice for reconstructing the underlying subtiles.
         std::array<grid::cell,6> triangles{};
         std::array<grid::node_id,6> source_leaves{};
     };
@@ -56,8 +58,18 @@ namespace jw::hexgrid {
         std::optional<std::pair<coordinate,coordinate>> bounds() const;
     };
 
-    // Derive a hex patch from leaf triangle occupancy (never used during inflation).
-    // Throws on mixed/invalid complete hexes, duplicate triangles, or interior holes.
-    // Incomplete hexes on the outside of the root supertile are discarded.
-    hex_patch convert(const grid::patch& triangles);
+    // Recognize six-sector motifs from leaf triangle occupancy. A rooted
+    // supertile supplies an enclosing expected support; a finite leaf-only
+    // patch instead validates the full support of each prototile occurrence.
+    // Invalid complete hexes and missing subtile cells are errors; partial
+    // boundary hexes are discarded. Fully absent hexes may form intentional
+    // holes in a finite patch. Specify placement to preserve the phase.
+    // Reconstruct leaf prototiles using only axial positions, types and orientations.
+    // Auxiliary triangle/source arrays in hex_tile are not used as inputs.
+    grid::patch to_triangles(const hex_patch& hexes);
+
+    // The optional placement specifies the phase exactly, avoiding phase inference
+    // on finite patches. Without it, the original supertile behavior is preserved.
+    hex_patch convert(const grid::patch& triangles,
+                      std::optional<lattice> placement = std::nullopt);
 }
